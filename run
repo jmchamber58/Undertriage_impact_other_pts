@@ -22,3 +22,126 @@ from sql_server_conn import sql_server_alchemy_conn
 import scipy.stats as stats
    
 conn, engine = sql_server_alchemy_conn()
+
+#%%
+
+sql_text = """
+/*
+Undertriage impact on patient flow: what is the change in door to provider time, length of stay and number of patients/hour per provider for subsequent patients after a provider sees a patient who is undertriaged? 
+a.	Plan: Plot undertriage rate for ESI 4/5 on x-axis with the following on the y-axis
+i.	Door to provider time
+ii.	Length of stay
+iii.	# patients/hour for the 1 hour before/after and 2 hours before/after the undertriage patient
+b.	Do we do the same for overtriage?
+c.	Data Need
+i.	Patient demographics: age, gender, race, ethnicity, insurance, time/date of visit, ESI triage
+ii.	Door to provider time
+iii.	Length of stay
+iv.	# patients/hour for the 1 hour before/after and 2 hours before/after the undertriage patient
+v.	Daily undertriage rates for ESI 4/5
+vi.	Timeframe: I think since start of project? Sept. 2022-present day  
+*/
+
+DECLARE @start date = '09/01/2022'
+DECLARE @end date = '02/28/2025'
+DECLARE @number numeric = 1
+
+; with tat as
+
+	(
+	select patient_fin FIN, format(checkin_date_time, 'yyyy-MM-dd') DOV
+	, checkin_date_time
+	, DATEDIFF(month,pt_dob,CHECKIN_DATE_TIME) Age_mos
+	, PT_GENDER, PT_RACE, PT_ETHNICITY
+	, left (pt_acuity,1) ESI
+	, FIRST_MD_SEEN, ARRIVE_TO_DR_SEES as Arr_to_Prov, TOTAL_ED_LOS as LOS
+	, DOCTORSEE_DATE_TIME
+	, format(checkin_date_time, 'yyyy-MM-dd-HH') as HOV
+	, format(doctorsee_date_time, 'yyyy-MM-dd-HH') as HOProv 
+	from ED_TAT_MASTER
+	where left (pt_acuity,1) in ('4','5')
+	and CHECKIN_DATE_TIME between @start and @end
+	)
+
+, nebs as
+	(select pt_fin neb_fin, NEB = 1
+	from ED_Orders_Import_Master
+	where rx_route like '%neb%' and order_status in ('completed','discontinued') and try_cast(dose as numeric) >3 and DOSE_UNIT = 'mg'
+	and pt_fin in 
+		(select FIN from tat)
+	)
+
+, IV as
+	(select pt_fin IV_fin, IV = 1
+	from ED_Orders_Import_Master
+	where rx_route like 'IV%' 
+	and pt_fin in 
+		(select FIN from tat)
+	)
+
+, ADM as
+	(
+	select PATIENT_FIN ADM_FIN, ADM = 1
+	from ED_TAT_MASTER
+	where pt_disch_dispo like '%admitted%' or pt_disch_dispo like '%IP'
+	and patient_fin in 
+		(select FIN from tat)
+	)
+
+, O2 as
+	(
+	select pt_fin O2_FIN, O2 = 1
+    from ED_Vitals_Import_Master	
+			where FIO2_RESULT is not null and try_cast(left(FIO2_RESULT,2) as numeric) > 21	
+			and pt_fin in 
+		(select FIN from tat)
+	)
+
+, UT as
+	(
+	select * from tat
+	left outer join nebs on tat.FIN = nebs.neb_FIN
+	left outer join IV on tat.FIN = IV.IV_FIN
+	left outer join ADM on tat.FIN = ADM.ADM_FIN
+	left outer join O2 on tat.FIN = O2.O2_FIN
+	where nebs.neb_fin is not null or IV.IV_fin is not null or ADM.ADM_FIN is not null or O2.O2_FIN is not null
+	)
+
+, OP as
+	(
+	select UT.*, tat2.PATIENT_FIN as OP_FIN
+	, format(tat2.CHECKIN_DATE_TIME,'yyyy-MM-dd-HH') as OP_HOV
+	, format(tat2.doctorsee_date_time, 'yyyy-MM-dd-HH') as OP_HOProv
+	, LEFT(tat2.FIRST_MD_SEEN, CHARINDEX(',', tat2.FIRST_MD_SEEN) - 1) AS OP_ProvLastName
+	, concat( format(tat2.doctorsee_date_time, 'yyyy-MM-dd-HH'),'_',LEFT(tat2.FIRST_MD_SEEN, CHARINDEX(',', tat2.FIRST_MD_SEEN) - 1)) as OP_HOProv_Prov 
+	, tat2.ARRIVE_TO_DR_SEES as OP_Arr_to_Prov, tat2.TOTAL_ED_LOS as OP_LOS
+	, CASE WHEN tat2.DOCTORSEE_DATE_TIME < UT.DOCTORSEE_DATE_TIME THEN 'PRE'
+			WHEN tat2.DOCTORSEE_DATE_TIME > UT.DOCTORSEE_DATE_TIME THEN 'POST'
+			END PRE_POST
+	from UT
+	inner join ed_tat_master tat2
+	on UT.DOV = format(tat2.CHECKIN_DATE_TIME,'yyyy-MM-dd')
+		and UT.FIRST_MD_SEEN = tat2.FIRST_MD_SEEN
+		and UT.FIN <> tat2.PATIENT_FIN
+	)
+
+select distinct * from OP
+
+--concat HOProv and Prov name
+
+"""
+df = pd.read_sql(sql_text,con=conn)
+
+#%%
+pivot = pd.pivot_table(data=df,values='OP_FIN', index=['DOV','OP_ProvLastName'],columns='PRE_POST', aggfunc='count')
+#need to normalize PRE and POST to patients per hour
+
+# %%
+
+"""
+case_IV = IV['Tri_to_IV_Case'].to_numpy()
+control_IV = IV['Tri_to_IV'].to_numpy()
+
+#stats.ttest_rel(case_IV,control_IV) # paired t test
+stats.wilcoxon(case_IV,control_IV)
+"""
