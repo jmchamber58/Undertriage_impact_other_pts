@@ -1,0 +1,24 @@
+# -*- coding: utf-8 -*-
+"""
+Created on 2024_02_22
+Looks at impact of undertriage on flow for other patients
+@author: jchamber
+"""
+#%%
+import pandas as pd
+import os
+#import io
+import numpy as np
+import matplotlib.pyplot as plt
+import datetime
+from datetime import timedelta
+from dateutil.parser import parse
+#import seaborn as sns
+#import xlsxwriter
+import win32com.client as win32
+from stat import S_IREAD, S_IRGRP, S_IROTH
+import sys
+from sql_server_conn import sql_server_alchemy_conn
+import scipy.stats as stats
+   
+conn, engine = sql_server_alchemy_conn()
