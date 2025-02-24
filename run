@@ -137,6 +137,10 @@ pivot = pd.pivot_table(data=df,values='OP_FIN', index=['DOV','OP_ProvLastName'],
 #need to normalize PRE and POST to patients per hour
 
 # %%
+pivot_pph = pd.pivot_table(data=df,values='OP_FIN',index='OP_HOProv_Prov',aggfunc=pd.Series.nunique)
+
+# aggfunction = 'count' is giving duplicate results--changing aggfunc to pd.Series.nunique fixed it
+# how to handle more than one undertriage in the same day for the same provider?
 
 """
 case_IV = IV['Tri_to_IV_Case'].to_numpy()
@@ -145,3 +149,4 @@ control_IV = IV['Tri_to_IV'].to_numpy()
 #stats.ttest_rel(case_IV,control_IV) # paired t test
 stats.wilcoxon(case_IV,control_IV)
 """
+# %%
